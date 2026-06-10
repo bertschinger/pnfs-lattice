@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: MIT
 
 add_library(pnfs_cluster STATIC
-    grpc_service.c
     rename_2pc.c
     hardlink_2pc.c
     cluster_transport.c
@@ -23,6 +22,6 @@ target_include_directories(pnfs_cluster PUBLIC
 target_link_libraries(pnfs_cluster
     PUBLIC
         pnfs_common
-        
+
         pthread
 )
