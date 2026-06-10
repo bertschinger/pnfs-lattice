@@ -537,64 +537,6 @@ static enum mds_status compound_cat_inode_get(
 	return MDS_OK;
 }
 
-/**
- * Dirent read via catalogue (RonDB backend).
- * Checks the dirent cache first; populates on miss.
- * Caches negative (NOTFOUND) results with TTL.
- */
-static enum mds_status compound_cat_dirent_get(
-	struct compound_data *cd,
-	uint64_t parent_fileid, const char *name,
-	uint64_t *child_fileid, uint8_t *type)
-{
-	struct mds_inode child;
-	enum mds_status st;
-	uint64_t dcache_gen = 0;
-
-	/* Check dirent cache first. */
-	if (cd->dcache != NULL) {
-		int dc_rc = dirent_cache_get(cd->dcache, parent_fileid,
-					     name, child_fileid, type);
-		if (dc_rc == 0) {
-			return MDS_OK; /* positive hit */
-		}
-		if (dc_rc == 1) {
-			return MDS_ERR_NOTFOUND; /* negative hit */
-		}
-		/* dc_rc == -1: miss -- fall through to backend.  Snapshot
-		 * the invalidation generation BEFORE the backend read so
-		 * we can detect a racing CREATE/REMOVE and skip inserting
-		 * a stale negative entry below. */
-		dcache_gen = dirent_cache_read_gen(cd->dcache);
-	}
-
-	if (cd->cat == NULL) {
-		return MDS_ERR_INVAL;
-	}
-
-	st = mds_cat_ns_lookup(cd->cat, parent_fileid, name, &child);
-	if (st == MDS_OK) {
-		*child_fileid = child.fileid;
-		*type = (uint8_t)child.type;
-		if (cd->dcache != NULL) {
-			dirent_cache_put(cd->dcache, parent_fileid,
-					 name, child.fileid,
-					 (uint8_t)child.type);
-		}
-		return MDS_OK;
-	}
-	if (st == MDS_ERR_NOTFOUND && cd->dcache != NULL) {
-		/* Race-guarded negative insert: if any invalidate has run
-		 * since dcache_gen was sampled (in particular a CREATE on
-		 * this same (parent, name) that committed to NDB between
-		 * the gen sample and the backend read), the conditional
-		 * put skips and the next LOOKUP re-reads the backend. */
-		(void)dirent_cache_put_negative_if_unchanged(
-			cd->dcache, parent_fileid, name, dcache_gen);
-	}
-	return st;
-}
-
 /* -----------------------------------------------------------------------
  * Request-local inode snapshot helpers
  * ----------------------------------------------------------------------- */

@@ -447,45 +447,6 @@ void open_state_table_set_skip_ndb(struct open_state_table *ot, bool skip)
     }
 }
 
-/* -----------------------------------------------------------------------
- * Share conflict check against RonDB open-state rows.
- * ----------------------------------------------------------------------- */
-
-struct rondb_share_check_ctx {
-    uint32_t share_access;
-    uint32_t share_deny;
-    bool conflict;
-};
-
-static int rondb_share_check_cb(const struct mds_coord_open_row *row,
-                                 void *arg)
-{
-    struct rondb_share_check_ctx *ctx = arg;
-
-    /* RFC 8881 S9.1: deny modes vs access modes. */
-    if ((row->share_deny & OPEN4_SHARE_DENY_READ) &&
-        (ctx->share_access & OPEN4_SHARE_ACCESS_READ)) {
-        ctx->conflict = true;
-        return 1; /* stop scan */
-    }
-    if ((row->share_deny & OPEN4_SHARE_DENY_WRITE) &&
-        (ctx->share_access & OPEN4_SHARE_ACCESS_WRITE)) {
-        ctx->conflict = true;
-        return 1;
-    }
-    if ((ctx->share_deny & OPEN4_SHARE_DENY_READ) &&
-        (row->share_access & OPEN4_SHARE_ACCESS_READ)) {
-        ctx->conflict = true;
-        return 1;
-    }
-    if ((ctx->share_deny & OPEN4_SHARE_DENY_WRITE) &&
-        (row->share_access & OPEN4_SHARE_ACCESS_WRITE)) {
-        ctx->conflict = true;
-        return 1;
-    }
-    return 0; /* continue scan */
-}
-
 /* ----------------------------------------------------------------------- */
 
 int open_state_open(struct open_state_table *ot,
@@ -959,51 +920,6 @@ int open_state_downgrade(struct open_state_table *ot,
     pthread_rwlock_unlock(&ot->stateid_locks[stateid_lock_idx]);
     pthread_mutex_unlock(&ot->locks[file_lock_idx]);
     return 0;
-}
-
-static int reload_cb(const uint8_t *other,
-                     uint64_t clientid, uint64_t fileid,
-                     uint32_t share_access, uint32_t share_deny,
-                     const uint8_t *owner, uint32_t owner_len,
-                     void *arg)
-{
-    struct open_state_table *ot = arg;
-    struct nfs4_open_state *os = calloc(1, sizeof(*os));
-    uint32_t idx;
-
-    if (os == NULL) { return 0; }
-    memcpy(os->stateid.other, other, NFS4_OTHER_SIZE);
-    os->stateid.seqid = 1;
-    os->clientid = clientid;
-    os->fileid = fileid;
-    os->share_access = share_access;
-    os->share_deny = share_deny;
-    os->open_owner_len = (owner_len <= NFS4_OPEN_OWNER_MAX) ? owner_len : NFS4_OPEN_OWNER_MAX;
-    if (owner_len > 0) {
-        memcpy(os->open_owner, owner, os->open_owner_len);
-    }
-
-    idx = hash_other(os->stateid.other);
-    os->hash_next = ot->stateid_hash[idx];
-    ot->stateid_hash[idx] = os;
-
-    /* Rebuild the per-file index (file_hash + file_next) so that
-     * share-deny conflict detection and has_writers work after reload. */
-    {
-        struct file_opens *fo = get_or_create_file_opens(ot, fileid);
-        if (fo != NULL) {
-            os->file_next = fo->head;
-            fo->head = os;
-        }
-    }
-
-    return 0;
-}
-
-int open_state_table_reload(struct open_state_table *ot, void *unused)
-{
-    (void)ot; (void)unused;
-    return 0; /* Memory-only: nothing to reload. */
 }
 
 /*
