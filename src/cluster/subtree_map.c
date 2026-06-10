@@ -5,9 +5,8 @@
  * subtree_map.c -- Subtree ownership map.
  *
  * Lock contract:
- *   - apply_subtree_upsert() / apply_subtree_remove() are private
- *     helpers that take the write lock internally and mutate the
- *     local cache.  Called by watch handlers and init.
+ *   - apply_subtree_upsert() is a private helper that takes the write
+ *     lock internally and mutates the local cache.
  *   - Backend vtable set_owner/set_state/add_entry/remove_entry
  *     do RonDB I/O OUTSIDE the rwlock, then wait for the watch
  *     handler to apply the change locally.
@@ -180,91 +179,6 @@ static int find_exact(const struct subtree_map *m, const char *path)
 }
     }
     return -1;
-}
-
-/* -----------------------------------------------------------------------
- * apply_subtree_upsert / apply_subtree_remove
- *
- * Private helpers that mutate the local array under write lock.
- * Called by: watch handlers, init snapshot loading.
- * ----------------------------------------------------------------------- */
-
-static void apply_subtree_upsert(struct subtree_map *m,
-                                 const char *path,
-                                 uint32_t owner_mds_id,
-                                 enum subtree_state state,
-                                 uint64_t version)
-{
-    pthread_rwlock_wrlock(&m->lock);
-
-    int idx = find_exact(m, path);
-    if (idx >= 0) {
-        m->entries[idx].owner_mds_id = owner_mds_id;
-        m->entries[idx].state = state;
-        m->entries[idx].version = version;
-    } else {
-        if (grow_entries(m) == MDS_OK) {
-            struct subtree_entry *e = &m->entries[m->count];
-            memset(e, 0, sizeof(*e));
-            (void)snprintf(e->path, sizeof(e->path), "%s", path);
-            e->owner_mds_id = owner_mds_id;
-            e->state = state;
-            e->version = version;
-            m->count++;
-        }
-    }
-
-    pthread_rwlock_unlock(&m->lock);
-}
-
-static void apply_subtree_remove(struct subtree_map *m, const char *path)
-{
-    pthread_rwlock_wrlock(&m->lock);
-
-    int idx = find_exact(m, path);
-    if (idx >= 0) {
-        if ((uint32_t)(idx + 1) < m->count) {
-            memmove(&m->entries[idx], &m->entries[idx + 1],
-                    (m->count - (uint32_t)idx - 1) *
-                    sizeof(m->entries[0]));
-        }
-        m->count--;
-    }
-
-    pthread_rwlock_unlock(&m->lock);
-}
-
-/* -----------------------------------------------------------------------
- * Wait-for-revision (subtree)
- * ----------------------------------------------------------------------- */
-
-static void subtree_signal_revision(struct subtree_map *m, int64_t rev)
-{
-    pthread_mutex_lock(&m->rev_mutex);
-    if (rev > m->applied_revision) {
-        m->applied_revision = rev;
-    }
-    pthread_cond_broadcast(&m->rev_cond);
-    pthread_mutex_unlock(&m->rev_mutex);
-}
-
-static enum mds_status subtree_wait_for_revision(struct subtree_map *m,
-                                                  int64_t target_rev)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += WAIT_FOR_REV_TIMEOUT_SEC;
-
-    pthread_mutex_lock(&m->rev_mutex);
-    while (m->applied_revision < target_rev) {
-        int rc = pthread_cond_timedwait(&m->rev_cond, &m->rev_mutex, &ts);
-        if (rc != 0) {
-            pthread_mutex_unlock(&m->rev_mutex);
-            return MDS_ERR_IO;
-        }
-    }
-    pthread_mutex_unlock(&m->rev_mutex);
-    return MDS_OK;
 }
 
 /* -----------------------------------------------------------------------
@@ -443,6 +357,40 @@ enum mds_status subtree_map_init(const char *etcd_endpoints,
 /* RONDB_PM_STATE_ACTIVE from rondb_schema.h -- inlined to avoid
  * adding src/catalogue to the cluster include path. */
 #define PM_STATE_ACTIVE 0
+
+/* -----------------------------------------------------------------------
+ * apply_subtree_upsert
+ *
+ * Private helper that mutates the local array under write lock.
+ * ----------------------------------------------------------------------- */
+
+static void apply_subtree_upsert(struct subtree_map *m,
+                                 const char *path,
+                                 uint32_t owner_mds_id,
+                                 enum subtree_state state,
+                                 uint64_t version)
+{
+    pthread_rwlock_wrlock(&m->lock);
+
+    int idx = find_exact(m, path);
+    if (idx >= 0) {
+        m->entries[idx].owner_mds_id = owner_mds_id;
+        m->entries[idx].state = state;
+        m->entries[idx].version = version;
+    } else {
+        if (grow_entries(m) == MDS_OK) {
+            struct subtree_entry *e = &m->entries[m->count];
+            memset(e, 0, sizeof(*e));
+            (void)snprintf(e->path, sizeof(e->path), "%s", path);
+            e->owner_mds_id = owner_mds_id;
+            e->state = state;
+            e->version = version;
+            m->count++;
+        }
+    }
+
+    pthread_rwlock_unlock(&m->lock);
+}
 
 struct pm_load_ctx {
     struct subtree_map *map;

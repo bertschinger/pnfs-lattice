@@ -8,9 +8,8 @@
  * (local in-memory).
  *
  * Lock contract:
- *   - apply_member_upsert() / apply_member_remove() are private
- *     helpers that take the write lock internally and mutate the
- *     local cache.  They are called by watch handlers and init.
+ *   - apply_member_upsert() is a private helper that takes the write
+ *     lock internally and mutates the local cache.
  *   - Backend vtable join/leave do RonDB I/O OUTSIDE the rwlock,
  *     then wait for the watch handler to apply the change locally.
  *   - Local backend join/leave are called with write lock held
@@ -121,73 +120,6 @@ static uint32_t lowest_mds_id(const struct cluster_membership *ctx)
         }
     }
     return low;
-}
-
-/* -----------------------------------------------------------------------
- * apply_member_upsert / apply_member_remove
- *
- * Private helpers that mutate the local array under write lock.
- * Called by: watch handlers, init snapshot loading, local backend.
- *
- * Returns true if this was a new insert (not an update).
- * ----------------------------------------------------------------------- */
-
-static bool apply_member_upsert(struct cluster_membership *ctx,
-                                const struct cluster_member *member)
-{
-    bool is_new = false;
-
-    pthread_rwlock_wrlock(&ctx->lock);
-
-    int idx = find_member(ctx, member->mds_id);
-    if (idx >= 0) {
-        /* Update existing member -- preserve join_time if not set. */
-        uint64_t old_join_time = ctx->members[idx].join_time_sec;
-        ctx->members[idx] = *member;
-        if (ctx->members[idx].join_time_sec == 0) {
-            ctx->members[idx].join_time_sec = old_join_time;
-        }
-    } else {
-        /* New member -- grow and insert. */
-        if (grow_members(ctx) == MDS_OK) {
-            ctx->members[ctx->count] = *member;
-            ctx->count++;
-            is_new = true;
-        }
-    }
-
-    pthread_rwlock_unlock(&ctx->lock);
-
-    /* Register hostname in subtree map (outside our lock). */
-    if (ctx->smap != NULL && member->hostname[0] != '\0') {
-        (void)subtree_map_register_node(ctx->smap, member->mds_id,
-                                        member->hostname);
-    }
-
-    return is_new;
-}
-
-static void apply_member_remove(struct cluster_membership *ctx,
-                                uint32_t mds_id)
-{
-    pthread_rwlock_wrlock(&ctx->lock);
-
-    int idx = find_member(ctx, mds_id);
-    if (idx >= 0) {
-        if ((uint32_t)(idx + 1) < ctx->count) {
-            memmove(&ctx->members[idx], &ctx->members[idx + 1],
-                    (ctx->count - (uint32_t)idx - 1) *
-                    sizeof(ctx->members[0]));
-        }
-        ctx->count--;
-    }
-
-    pthread_rwlock_unlock(&ctx->lock);
-
-    /* Unregister hostname from subtree map (outside our lock). */
-    if (ctx->smap != NULL) {
-        (void)subtree_map_unregister_node(ctx->smap, mds_id);
-    }
 }
 
 /* -----------------------------------------------------------------------
@@ -331,6 +263,49 @@ enum mds_status cluster_membership_init(const struct mds_config *cfg,
 
 #ifdef HAVE_RONDB
 #include "catalogue_rondb.h"
+
+/* -----------------------------------------------------------------------
+ * apply_member_upsert
+ *
+ * Private helper that mutates the local array under write lock.
+ *
+ * Returns true if this was a new insert (not an update).
+ * ----------------------------------------------------------------------- */
+
+static bool apply_member_upsert(struct cluster_membership *ctx,
+                                const struct cluster_member *member)
+{
+    bool is_new = false;
+
+    pthread_rwlock_wrlock(&ctx->lock);
+
+    int idx = find_member(ctx, member->mds_id);
+    if (idx >= 0) {
+        /* Update existing member -- preserve join_time if not set. */
+        uint64_t old_join_time = ctx->members[idx].join_time_sec;
+        ctx->members[idx] = *member;
+        if (ctx->members[idx].join_time_sec == 0) {
+            ctx->members[idx].join_time_sec = old_join_time;
+        }
+    } else {
+        /* New member -- grow and insert. */
+        if (grow_members(ctx) == MDS_OK) {
+            ctx->members[ctx->count] = *member;
+            ctx->count++;
+            is_new = true;
+        }
+    }
+
+    pthread_rwlock_unlock(&ctx->lock);
+
+    /* Register hostname in subtree map (outside our lock). */
+    if (ctx->smap != NULL && member->hostname[0] != '\0') {
+        (void)subtree_map_register_node(ctx->smap, member->mds_id,
+                                        member->hostname);
+    }
+
+    return is_new;
+}
 
 struct rondb_membership_ctx {
     struct cluster_membership *cm;
