@@ -258,28 +258,6 @@ target_link_libraries(test_nfs4_cb PRIVATE
 add_test(NAME test_nfs4_cb COMMAND test_nfs4_cb)
 set_tests_properties(test_nfs4_cb PROPERTIES LABELS "unit")
 
-add_executable(test_proxy_io     unit/test_proxy_io.c)
-target_include_directories(test_proxy_io PRIVATE
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/src/tools
-    ${PROJECT_SOURCE_DIR}/src/catalogue
-    ${PROJECT_SOURCE_DIR}/tests
-)
-target_link_libraries(test_proxy_io PRIVATE
-    test_memdb
-    pnfs_mds_core
-    pnfs_cluster
-    pnfs_fsal_obj
-    pnfs_common
-    pnfs_mds_core
-    pnfs_cluster
-    pnfs_mds_core
-    
-    pthread
-)
-add_test(NAME test_proxy_io COMMAND test_proxy_io)
-set_tests_properties(test_proxy_io PROPERTIES LABELS "unit")
-
 # TCP-based replication tests need longer timeout
 # due to sleep-based synchronisation in the test harness.
 

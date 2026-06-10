@@ -980,8 +980,6 @@ static enum mds_status mem_gc_count(struct mds_catalogue *cat,
 }
 
 /* Stubs for operations not commonly used in unit tests */
-static enum mds_status mem_stub_notfound(void) { return MDS_ERR_NOTFOUND; }
-static enum mds_status mem_stub_ok(void) { return MDS_OK; }
 static enum mds_status mem_ds_provision_get(struct mds_catalogue *cat,
     uint32_t ds_id, uint8_t *secret, uint32_t secret_len, uint64_t *epoch)
 {
@@ -1037,19 +1035,6 @@ static enum mds_status mem_ds_provision_del(struct mds_catalogue *cat,
         }
     }
     return MDS_ERR_NOTFOUND;
-}
-
-/* Dirent get (low-level) */
-static enum mds_status mem_dirent_get(struct mds_catalogue *cat,
-    uint64_t parent, const char *name,
-    uint64_t *child_fileid, uint8_t *child_type)
-{
-    struct memdb *m = cat->backend_private;
-    int idx = memdb_find_dirent(m, parent, name);
-    if (idx < 0) return MDS_ERR_NOTFOUND;
-    *child_fileid = m->dirents[idx].child_fileid;
-    *child_type = m->dirents[idx].child_type;
-    return MDS_OK;
 }
 
 /* -----------------------------------------------------------------------

@@ -55,13 +55,6 @@ static int fail_count;
 
 #define TEST_MAP_SIZE (64ULL * 1024 * 1024)
 
-static char *make_temp_db_path(void)
-{
-    static char path[256];
-    snprintf(path, sizeof(path), "/tmp/test_ds_health_%d", getpid());
-    return path;
-}
-
 /* -----------------------------------------------------------------------
  * Test 1: ds_addr_parse_host
  * ----------------------------------------------------------------------- */
@@ -124,7 +117,6 @@ static void test3_fail_cb(uint32_t ds_id, void *ctx)
 
 static void test_force_fail(void)
 {
-    char *path = make_temp_db_path();
     struct mds_catalogue *db = NULL;
 	struct mds_catalogue *cat = NULL;
     struct ds_health_monitor *hm = NULL;
@@ -188,7 +180,6 @@ static void test4_fail_cb(uint32_t ds_id, void *ctx)
 
 static void test_report_error_threshold(void)
 {
-    char *path = make_temp_db_path();
     struct mds_catalogue *db = NULL;
 	struct mds_catalogue *cat = NULL;
     struct ds_health_monitor *hm = NULL;
@@ -238,7 +229,6 @@ static void test_report_error_threshold(void)
 
 static void test_commit_op_ds_state(void)
 {
-    char *path = make_temp_db_path();
     struct mds_catalogue *db = NULL;
     struct commit_queue *cq = NULL;
 
@@ -292,7 +282,6 @@ static void test_commit_op_ds_state(void)
 
 static void test_init_rejects_zero_interval(void)
 {
-    char *path = make_temp_db_path();
     struct mds_catalogue *db = NULL;
 	struct mds_catalogue *cat = NULL;
     struct ds_health_monitor *hm = NULL;
