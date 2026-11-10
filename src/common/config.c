@@ -12,6 +12,9 @@
 #include <string.h>
 #include <errno.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "pnfs_mds.h"
 #include "catalogue_backend_names.h"
@@ -185,6 +188,68 @@ static char *strip_whitespace(char *s)
     return s;
 }
 
+/*
+ * Reads the contents of the config file in path into a buffer. Updates *contents to point to that
+ * buffer.
+ *
+ * Returns 0 on success or a nonzero error code.
+ */
+static enum mds_status mds_config_read(const char *path, char **contents)
+{
+    static const char *err;
+    ssize_t nread = 0;
+    struct stat st;
+    int rc;
+    int fd;
+
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        err = "open";
+        goto io_error;
+    }
+
+    rc = fstat(fd, &st);
+    if (rc != 0) {
+        err = "stat";
+        goto io_error;
+    }
+
+    char *buf = malloc(st.st_size);
+    if (buf == NULL) {
+        fprintf(stderr, "Out of memory.\n");
+        return MDS_ERR_NOMEM;
+    }
+
+    do {
+        nread = read(fd, &buf[nread], st.st_size - nread);
+        if (nread < 0) {
+            err = "read";
+            goto io_error;
+        }
+
+        if (nread > st.st_size) {
+            /*
+             * We read more bytes than expected. That would suggest the config file was
+             * modified between stat() and read(). No good.
+             */
+            fprintf(stderr,
+                "Config file '%s' was modified while reading. Please try again once config file is stable.\n",
+
+                path);
+            return MDS_ERR_IO;
+        }
+    } while (nread < st.st_size);
+
+    *contents = buf;
+
+    return MDS_OK;
+
+io_error:
+    fprintf(stderr, "Failed to %s config file '%s': %s\n",
+            err, path, strerror(errno));
+    return MDS_ERR_IO;
+}
+
 /* NOLINTNEXTLINE(readability-function-cognitive-complexity) */
 enum mds_status mds_config_load(const char *path, struct mds_config *cfg)
 {
@@ -192,6 +257,7 @@ enum mds_status mds_config_load(const char *path, struct mds_config *cfg)
     char line[CFG_LINE_MAX];
     char selected_profile[CFG_LINE_MAX];
     bool have_profile = false;
+    char *contents = NULL;
 
     if (path == NULL || cfg == NULL) {
         return MDS_ERR_INVAL;
@@ -401,10 +467,11 @@ enum mds_status mds_config_load(const char *path, struct mds_config *cfg)
         cfg->log_level_by_component[i] = -1;
     }
 
-    fp = fopen(path, "r");
-    if (fp == NULL) {
-        return MDS_ERR_IO;
+    enum mds_status ret = mds_config_read(path, &contents);
+    if (ret != MDS_OK) {
+	    return ret;
     }
+
     selected_profile[0] = '\0';
 
     /* First pass: scan for workload_profile and remember the last
